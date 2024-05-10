@@ -2,7 +2,7 @@ import time
 
 class Logger:
     def __init__(self, class_):
-        self.class_name = class_.__class__.__name__
+        self.class_name = str(class_)
         self.logs = []
 
     def log(self, message):

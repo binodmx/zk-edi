@@ -7,47 +7,37 @@ import math
 import time
 import threading
 from sklearn.cluster import SpectralClustering
-from blspy import (PrivateKey, Util, AugSchemeMPL, PopSchemeMPL, G1Element, 
-                   G2Element)
 
 class Simulator:
     def __init__(self, n_servers):
         self.logger = Logger(self)
-        self.logger.log("Initializing the simulator...")
-        self.n_servers = n_servers   
-        # self.latency_matrix = self.create_similarity_matrix(n_servers)
-        # self.app_vendor = AppVendor()
-        # self.edge_servers = []
-        # for i in range(n_servers):
-        #     self.edge_servers.append(EdgeServer(
-        #         id=i,
-        #         data_replica=bytes([1, 2, 3, 4, 5]),
-        #         latency_matrix=self.latency_matrix,
-        #         app_vendor=self.app_vendor))
-        # self.logger.log("Simulator built successfully.")  
+        self.n_servers = n_servers
+    
+    def __str__(self):
+        return f"Simulator"
                  
     def simulate(self):
-        self.logger.log("Starting the simulation...")
+        self.logger.log("Simulation started.")
 
-        # Phase 1: Cluster Formation
-        # TODO: Implement the cluster HEAD selection algorithm.
-        n_clusters = 3
-        clustering = self.app_vendor.cluster(self.latency_matrix, n_clusters)
-        self.cluster_heads = []
+        # 1: Cluster Formation
+        self.similarity_matrix = self.get_similarity_matrix(self.n_servers)
+        self.clusters = self.get_clusters(self.similarity_matrix, 3)
+        self.app_vendor = AppVendor()
+        self.edge_servers = []
         for i in range(self.n_servers):
-            self.edge_servers[i].set_cluster(
-                [j for j in range(self.n_servers) if clustering[j] == 
-                 clustering[i]])
+            self.edge_servers.append(EdgeServer(
+                id=i,
+                data_replica=bytes([1, 2, 3, 4, 5]),
+                app_vendor=self.app_vendor))
         
-        # Phase 2: Data Sharing and Verification
-        # TODO: This should be done using threads (parallely)
+        # 2. Data Sharing and Verification
         for i in range(self.n_servers):
-            threading.Thread(target=self.edge_servers[i].send_proof).start()
+            threading.Thread(target=self.edge_servers[i].run).start()
+            
+        # 3. Reputation System
+        threading.Thread(target=self.app_vendor.run).start()
 
-        # TODO: wait until all threads are done for current cluster head
-        for i in range(n_clusters):
-            threading.Thread(target=self.cluster_heads[i]
-                             .send_aggregated_proof).start()
+        self.logger.log("Simulation ended.")
 
     def get_similarity_matrix(self, n_servers):
         """

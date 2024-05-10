@@ -1,22 +1,35 @@
 import time
 import random
+import threading
+from Logger import Logger
 from blspy import (PrivateKey, Util, AugSchemeMPL, PopSchemeMPL,
                    G1Element, G2Element)
 
 class EdgeServer:
     HEARTBEAT_INTERVAL = 0.5
     
-    def __init__(self, id, data_replica, latency_matrix, app_vendor):
+    def __init__(self, id, data_replica, app_vendor):
         self.id = id
         self.data_replica = data_replica
-        self.latency_matrix = latency_matrix
+        # self.latency_matrix = latency_matrix
         self.app_vendor = app_vendor
+        self.logger = Logger(self)
+
+        # Python does not have a lock-free ConcurrentHashMap implementation
+        # due to Global Interpreter Lock (GIL). However, we can use a simple
+        # dictionary as a lock-free alternative due to GIL.
+        self.concurrent_hashmap = {}
+
+        # Generate private and public key pair for the edge server.
         self.seed: bytes = bytes([random.randint(0, 255) for i in range(32)])
         self.private_key: PrivateKey = AugSchemeMPL.key_gen(self.seed)
         self.public_key: G1Element = self.private_key.get_g1()
 
     def __str__(self):
         return f"EdgeServer {self.id}"
+
+    def run(self):
+        self.logger.log("Running...")
     
     def send_proof(self):
         """
@@ -51,3 +64,19 @@ class EdgeServer:
             for member in self.cluster_members:
                 member.notify()
             time.sleep(self.HEARTBEAT_INTERVAL)
+
+    def process_ping(self, server):
+        p = 0   # Number of successful pings
+        for i in range(10):
+            ping_response = server.pong()
+
+
+
+
+    def ping(self, servers):
+        for server in servers:
+            thread = threading.Thread(target=self.process_ping, args=(server,))
+            thread.start()
+
+    def pong(self):
+        pass
