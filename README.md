@@ -1,1 +1,1 @@
-# edi
+# zkEDI: Zero-Knowledge Edge Data Integrity Verification for Multi-access Edge Computing
