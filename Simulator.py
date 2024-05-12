@@ -7,11 +7,13 @@ import math
 import time
 import threading
 from sklearn.cluster import SpectralClustering
+from blspy import AugSchemeMPL
 
 class Simulator:
     def __init__(self, n_servers):
         self.logger = Logger(self)
         self.n_servers = n_servers
+        data_replica_size = 1024
     
     def __str__(self):
         return f"Simulator"
@@ -25,8 +27,13 @@ class Simulator:
         self.app_vendor = AppVendor()
         self.edge_servers = []
         for i in range(self.n_servers):
+            seed = bytes([random.randint(0, 255) for i in range(32)])
+            private_key = AugSchemeMPL.key_gen(seed)
+            public_key = private_key.get_g1()
             self.edge_servers.append(EdgeServer(
                 id=i,
+                private_key=private_key,
+                public_key=public_key,
                 data_replica=bytes([1, 2, 3, 4, 5]),
                 app_vendor=self.app_vendor))
         
