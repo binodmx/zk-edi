@@ -35,23 +35,20 @@ class Simulator:
         self.cluster_heads = self.get_cluster_heads()
         self.app_vendor = AppVendor()
         self.edge_servers = []
-        seed = bytes([random.randint(0, 255) for i in range(32)])
         data_replica = bytes([random.randint(0, 255) for i in range(
                     self.data_replica_size)])
         corrupted_servers = self.get_corrupted_servers()
         for i in range(self.n):
-            private_key = AugSchemeMPL.key_gen(seed)
-            public_key = private_key.get_g1()
             self.edge_servers.append(EdgeServer(
                 id=i,
                 n=self.n,
-                private_key=private_key,
-                public_key=public_key,
                 data_replica=data_replica,
                 is_corrupted=bool(corrupted_servers[i]),
                 app_vendor=self.app_vendor,
                 clusters=self.clusters,
-                cluster_heads=self.cluster_heads))
+                cluster_heads=self.cluster_heads,
+                dt1=self.dt1,
+                dt2=self.dt2))
         for i in range(self.n):
             self.edge_servers[i].set_edge_servers(self.edge_servers)
         self.logger.log("Clusters formed successfully!")
