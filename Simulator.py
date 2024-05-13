@@ -55,12 +55,20 @@ class Simulator:
         
         # 2. Data Sharing and Verification
         self.logger.log("Running data sharing and verification...")
-        for i in range(self.n):
-            threading.Thread(target=self.edge_servers[i].run).start()
+        server_threads = [threading.Thread(
+            target=self.edge_servers[i].run) for i in range(self.n)]
+        for server_thread in server_threads:
+            server_thread.start()
             
         # 3. Reputation System
-        # threading.Thread(target=self.app_vendor.run).start()
-
+        app_vendor_thread = threading.Thread(target=self.app_vendor.run)
+        app_vendor_thread.start()
+        
+        for server_thread in server_threads:
+            server_thread.join()
+        
+        app_vendor_thread.join()
+        
         self.logger.log("Simulation ended.")
 
     def get_similarity_matrix(self):

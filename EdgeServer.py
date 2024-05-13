@@ -52,7 +52,7 @@ class EdgeServer:
         if self.is_cluster_head:
             self.logger.log("Started as a cluster head.")
             self.send_agg_proof_to_chs()
-            self.notify_servers()
+            self.notify_global_integrity()
         else:
             self.logger.log("Started as a cluster member.")
             self.send_proof_to_ch()
@@ -116,7 +116,10 @@ class EdgeServer:
         else:
             self.logger.log(f"EdgeServer{id}'s agg_proof timed out.")
 
-    def notify_servers(self):
+    def notify_local_integrity(self):
+        pass
+
+    def notify_global_integrity(self):
         """
         Wait until timeout dt2 or all cluster heads have sent their proofs.
         Then if more than half of the agg_proofs are similar, find majority.
