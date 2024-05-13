@@ -11,3 +11,11 @@ class Logger:
         self.logs.append(log)
         if self.print_logs:
             print(log)
+
+    def write(self, key, message):
+        with open("logs.txt", "a") as f:
+            l = (80-len(key)) // 2
+            r = 80 - len(key) - l
+            f.write("-"*l + key + "-"*r + "\n")
+            f.write(message + "\n")
+            f.write("-"*80 + "\n")
