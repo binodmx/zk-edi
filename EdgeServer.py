@@ -7,8 +7,8 @@ from Logger import Logger
 from blspy import (PrivateKey, AugSchemeMPL, PopSchemeMPL, G1Element, G2Element)
 
 class EdgeServer:
-    def __init__(self, id, n, is_corrupted, data_replica, app_vendor, 
-                 clusters, cluster_heads, latency_matrix, dt1, dt2):
+    def __init__(self, id, n, is_corrupted, data_replica,  clusters, 
+                 cluster_heads, latency_matrix, dt1, dt2):
         self.id = id
         self.logger = Logger(self)
         self.n = n
@@ -20,7 +20,6 @@ class EdgeServer:
         self.private_key: PrivateKey = AugSchemeMPL.key_gen(bytes(
             [random.randint(0, 255) for i in range(32)]))
         self.public_key: G1Element = self.private_key.get_g1()
-        self.app_vendor = app_vendor
         self.clusters = clusters
         self.cluster_heads = cluster_heads
         self.c_id, self.ch_id = next(((c_id, cluster_heads[c_id])
