@@ -1,19 +1,23 @@
-from EdgeServer import EdgeServer
-from AppVendor import AppVendor
-from Logger import Logger
 import numpy as np
 import random
 import math
 import threading
-from sklearn.cluster import SpectralClustering
-from blspy import AugSchemeMPL
+import time
 import warnings
+from numpy import savetxt
+from numpy import loadtxt
+from EdgeServer import EdgeServer
+from Logger import Logger
+from sklearn.cluster import SpectralClustering
+from RecursiveSpectralClustering import RecursiveSpectralClustering
 
 class Simulator:
-    def __init__(self, n, data_replica_size, corruption_rate):
+    def __init__(self, edge_scale, replica_scale, replica_size, 
+                 corruption_rate):
         self.logger = Logger(self)
-        self.n = n
-        self.data_replica_size = data_replica_size
+        self.n = edge_scale
+        self.replica_scale = replica_scale
+        self.replica_size = replica_size
         self.corruption_rate = corruption_rate
         self.dt1 = 1
         self.dt2 = 2
@@ -22,30 +26,36 @@ class Simulator:
         return f"Simulator"
                  
     def run(self):
-        self.logger.log("Simulation started.")
-        self.logger.log(f"""Parameter settings: 
-                        n={self.n}, 
-                        data_replica_size={self.data_replica_size}bytes, 
+        self.logger.debug("Simulation started.")
+        self.logger.debug(f"""Parameter settings: 
+                        edge_scale={self.n}, 
+                        replica_scale={self.replica_scale},
+                        replica_size={self.replica_size}bytes, 
                         corruption_rate={self.corruption_rate}""")
 
-        # 1: Cluster Formation
-        self.logger.log("Running cluster formation...")
+        # Run Cluster Formation
+        self.logger.debug("Running cluster formation...")
+        st0 = time.time()
         self.rtt_matrix = self.get_rtt_matrix()
         self.similarity_matrix = self.get_similarity_matrix()
         self.clusters = self.get_clusters()
         self.cluster_heads = self.get_cluster_heads()
-        self.app_vendor = AppVendor()
+        self.corrupted_servers = self.get_corrupted_servers()
+        st1 = time.time()
+        self.logger.debug("Clusters formed successfully!")
+
+        # Initialize Servers
+        self.logger.debug("Initializing edge servers...")
+        st2 = time.time()
+        self.data_replica = bytes([random.randint(0, 255) for i in range(
+                    self.replica_size)])
         self.edge_servers = []
-        data_replica = bytes([random.randint(0, 255) for i in range(
-                    self.data_replica_size)])
-        corrupted_servers = self.get_corrupted_servers()
         for i in range(self.n):
             self.edge_servers.append(EdgeServer(
                 id=i,
                 n=self.n,
-                is_corrupted=bool(corrupted_servers[i]),
-                data_replica=data_replica,
-                app_vendor=self.app_vendor,
+                is_corrupted=bool(self.corrupted_servers[i]),
+                data_replica=self.data_replica,
                 clusters=self.clusters,
                 cluster_heads=self.cluster_heads,
                 latency_matrix=self.rtt_matrix/2,
@@ -53,28 +63,61 @@ class Simulator:
                 dt2=self.dt2))
         for i in range(self.n):
             self.edge_servers[i].set_edge_servers(self.edge_servers)
-        self.logger.log("Clusters formed successfully!")
+        st3 = time.time()
+        self.logger.debug("Edge servers initialized successfully!")
         
-        # 2. Data Sharing and Verification
-        self.logger.log("Running data sharing and verification...")
-        server_threads = [threading.Thread(
-            target=self.edge_servers[i].run) for i in range(self.n)]
-        for server_thread in server_threads:
-            server_thread.start()
-            
-        # 3. Reputation System
-        app_vendor_thread = threading.Thread(target=self.app_vendor.run)
-        app_vendor_thread.start()
+        # Run Data Sharing and Verification
+        self.logger.debug("Running data sharing and verification...")
+        init_thread_count = threading.active_count()
+        l_times = [-1]*self.n
+        g_times = [-1]*self.n
+        timed_out = [False]*self.n
+        for i in range(self.n):
+            threading.Thread(target=self.edge_servers[i].run, 
+                             args=(l_times, g_times, timed_out,)).start()
         
-        for server_thread in server_threads:
-            server_thread.join()
+        # Wait for all threads to finish
+        while threading.active_count() > init_thread_count:
+            time.sleep(0.000001)
+        self.logger.debug("Data verification completed successfully!")
         
-        app_vendor_thread.join()
-        
-        # self.logger.log("Simulation ended.")
-    
+        # Construct the metrics
+        metrics = {
+            "parameter_settings": {
+                "edge_scale": self.n,
+                "replica_scale": self.replica_scale,
+                "replica_size": self.replica_size,
+                "corruption_rate": self.corruption_rate
+            },
+            "duration": {
+                "local": l_times,
+                "global": g_times,
+                "dt1": self.dt1,
+                "dt2": self.dt2,
+                "timed_out": timed_out,
+                "cluster_formation": st1-st0,
+                "server_initialization": st3-st2,
+            },
+            "cluster_info": {
+                "clusters": str(self.clusters),
+                "cluster_heads": str(self.cluster_heads),
+                "n_clusters": len(self.clusters),
+                "corrupted_servers": str(self.corrupted_servers)
+            }
+        }
+
+        self.logger.debug("Simulation ended.")
+        return metrics
+
     def get_rtt_matrix(self):
-        self.logger.log("Creating the rtt_matrix...")
+        try:
+            rtt_matrix = loadtxt(f"data/rtt_matrix_{self.n}.csv", delimiter=",")
+            self.logger.debug("Loading the rtt_matrix...")
+            return rtt_matrix
+        except:
+            pass
+
+        self.logger.debug("Creating the rtt_matrix...")
         # Initialize rtt_matrix with random values. Each (i, j) element is the 
         # round trip time (s) between i and j.
         rtt_matrix = np.random.rand(self.n, self.n)
@@ -88,28 +131,35 @@ class Simulator:
         # failure_range, we can control the failure rate. Here, failure rate 
         # represents the percentage of servers that are not responding. Failures
         # are represented by negative values in the matrix.
-        failure_range = 0.35
+        failure_range = 0.5
         noise = np.random.rand(self.n, self.n) * failure_range - (
             failure_range / 2)
         rtt_matrix = rtt_matrix + noise
-        
-        # Finally, multiply rtt_matrix by 10 to get the round trip time in 
-        # between 0 and 10ms, then divide by 1000 to convert it to seconds.
-        rtt_matrix = (rtt_matrix*10)/1000
 
-        self.logger.log("RTT matrix created successfully!")
+        # Multiply rtt_matrix to get the round trip time in between 5 and 10ms. 
+        # Finally, divide by 1000 to convert it to seconds.
+        rtt_matrix[rtt_matrix > 0] = rtt_matrix[rtt_matrix > 0]*5+5
+        rtt_matrix = rtt_matrix/1000
+        
+        # Save the rtt_matrix to a file for future use.
+        savetxt(f"data/rtt_matrix_{self.n}.csv", rtt_matrix, delimiter=",")
+        self.logger.debug("RTT matrix created successfully!")
 
         return rtt_matrix
 
     def get_similarity_matrix(self):
-        self.logger.log("Creating the similarity_matrix...")
-        # Initialize hopcount_matrix with random values. We do not add noise to
-        # this matrix because noise is already added to the rtt_matrix. The hop
-        # count is between 1 and 4.
-        # hopcount_matrix = np.random.randint(1, 4, (self.n, self.n))
-        # hopcount_matrix = (hopcount_matrix + hopcount_matrix.T) // 2
+        try:
+            similarity_matrix = loadtxt(f"data/similarity_matrix_{self.n}.csv", 
+                                        delimiter=",")
+            self.logger.debug("Loading the similarity_matrix...")
+            return similarity_matrix
+        except:
+            pass
 
-        # Compute the similarity matrix using the formula.
+        self.logger.debug("Creating the similarity_matrix...")
+
+        # Compute the similarity matrix using the formula. We only consider the
+        # rtt between servers for similarity calculation for simplicity.
         similarity_matrix = np.zeros((self.n, self.n))
         for i in range(self.n):
             for j in range(self.n):
@@ -117,38 +167,34 @@ class Simulator:
         np.fill_diagonal(similarity_matrix, 0)
         similarity_matrix[similarity_matrix < 0] = 0
 
-        self.logger.log(f"""Parameter settings: 
+        self.logger.debug(f"""Parameter settings: 
                         failure_rate={(np.count_nonzero(
                             similarity_matrix == 0)-self.n)/self.n**2}""")
-        self.logger.log("Similarity matrix created successfully!")
+        
+        # Save the similarity_matrix to a file for future use.
+        savetxt(f"data/similarity_matrix_{self.n}.csv", 
+                similarity_matrix, delimiter=",")
+        self.logger.debug("Similarity matrix created successfully!")
 
         return similarity_matrix
     
     def get_clusters(self):
-        """
-        Clusters the servers represented by the adjacency matrix using spectral 
-        clustering.
-
-        Parameters:
-        - adjacency_matrix: The similarity matrix representing the graph 
-        structure of the servers to be clustered. It should be a square matrix 
-        where each entry (i, j) represents the similarity between servers i, j.
-        - n_clusters: The number of clusters to form.
-
-        Returns:
-        - labels: An array of cluster labels assigned to each server based on 
-        spectral clustering.
-        """
-        adjacency_matrix = self.similarity_matrix
-        # TODO: Determine the number of clusters dynamically.
-        n_clusters = math.floor(self.n**0.5)
-        self.logger.log("Clustering the servers...")
+        self.logger.debug("Clustering the servers...")
         warnings.simplefilter("ignore", UserWarning)
-        clustering = SpectralClustering(n_clusters=n_clusters, 
+
+        # No of clusters based on the number of servers is computed using the
+        # probability function maximizing the P(Z).
+        n_clusters_by_n = {10: 3, 20: 6, 50: 13, 100: 17, 200: 27}
+        n_clusters = n_clusters_by_n[self.n] if self.n in n_clusters_by_n.keys() else math.floor(self.n**0.5)
+        adjacency_matrix = self.similarity_matrix
+
+        # Change Clustering class here to use different clustering algorithms.
+        # [SpectralClustering, RecursiveSpectralClustering, RandomClustering]
+        clustering = RecursiveSpectralClustering(n_clusters=n_clusters, 
                                         affinity='precomputed', 
                                         assign_labels='kmeans')
         clustering.fit(adjacency_matrix)
-        self.logger.log("Servers clustered successfully!")
+        self.logger.debug("Servers clustered successfully!")
         clusters = {}
         for i in range(len(clustering.labels_)):
             if clustering.labels_[i] not in clusters:
@@ -157,16 +203,16 @@ class Simulator:
         return clusters
 
     def get_cluster_heads(self):
-        # TODO: find the cluster heads using proper algorithm.
+        # Get the cluster head for each cluster having the maximum similarity
         cluster_heads = {}
-        for cluster_id, servers in self.clusters.items():
+        for c_id, servers in self.clusters.items():
             total_scores = {}
             for i in servers:
                 total_scores[i] = 0
                 for j in servers:
                     total_scores[i] += self.similarity_matrix[i][j] 
                     + self.similarity_matrix[j][i]
-            cluster_heads[cluster_id] = max(total_scores, key=total_scores.get)
+            cluster_heads[c_id] = max(total_scores, key=total_scores.get)
         return cluster_heads                
 
     def get_corrupted_servers(self):
