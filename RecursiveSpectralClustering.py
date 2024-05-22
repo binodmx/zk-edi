@@ -33,7 +33,7 @@ class RecursiveSpectralClustering:
                 total_scores = {}
                 for i in temp_clusters[0]:
                     total_scores[i] = 0
-                    for j in temp_clusters[0]:
+                    for j in temp_clusters[1]:
                         total_scores[i] += X[i][j] + X[j][i]
                 sorted_scores = sorted(total_scores.items(), key=lambda x: x[1], reverse=True)
                 if L > m:
@@ -46,7 +46,7 @@ class RecursiveSpectralClustering:
                 total_scores = {}
                 for i in temp_clusters[1]:
                     total_scores[i] = 0
-                    for j in temp_clusters[1]:
+                    for j in temp_clusters[0]:
                         total_scores[i] += X[i][j] + X[j][i]
                 sorted_scores = sorted(total_scores.items(), key=lambda x: x[1], reverse=True)
                 if R > m:
