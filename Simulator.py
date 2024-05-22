@@ -10,17 +10,19 @@ from EdgeServer import EdgeServer
 from Logger import Logger
 from sklearn.cluster import SpectralClustering
 from RecursiveSpectralClustering import RecursiveSpectralClustering
+from RandomClustering import RandomClustering
 
 class Simulator:
     def __init__(self, edge_scale, replica_scale, replica_size, 
-                 corruption_rate):
+                 corruption_rate, dt1, dt2, dt3):
         self.logger = Logger(self)
         self.n = edge_scale
         self.replica_scale = replica_scale
         self.replica_size = replica_size
         self.corruption_rate = corruption_rate
-        self.dt1 = 1
-        self.dt2 = 2
+        self.dt1 = dt1
+        self.dt2 = dt2
+        self.dt3 = dt3
         
     def __str__(self):
         return f"Simulator"
@@ -49,6 +51,9 @@ class Simulator:
         st2 = time.time()
         self.data_replica = bytes([random.randint(0, 255) for i in range(
                     self.replica_size)])
+        self.l_times = [-1]*self.n
+        self.g_times = [-1]*self.n
+        self.timed_out = [False]*self.n
         self.edge_servers = []
         for i in range(self.n):
             self.edge_servers.append(EdgeServer(
@@ -60,7 +65,11 @@ class Simulator:
                 cluster_heads=self.cluster_heads,
                 latency_matrix=self.rtt_matrix/2,
                 dt1=self.dt1,
-                dt2=self.dt2))
+                dt2=self.dt2, 
+                dt3=self.dt3,
+                l_times=self.l_times,
+                g_times=self.g_times,
+                timed_out=self.timed_out))
         for i in range(self.n):
             self.edge_servers[i].set_edge_servers(self.edge_servers)
         st3 = time.time()
@@ -69,20 +78,17 @@ class Simulator:
         # Run Data Sharing and Verification
         self.logger.debug("Running data sharing and verification...")
         init_thread_count = threading.active_count()
-        l_times = [-1]*self.n
-        g_times = [-1]*self.n
-        timed_out = [False]*self.n
         for i in range(self.n):
-            threading.Thread(target=self.edge_servers[i].run, 
-                             args=(l_times, g_times, timed_out,)).start()
+            threading.Thread(target=self.edge_servers[i].run).start()
         
-        # Wait for all threads to finish
+        # Wait for all threads to finish and then wait for few more seconds 
+        # to ensure that all threads have completed the verification process.
         while threading.active_count() > init_thread_count:
             time.sleep(0.000001)
         self.logger.debug("Data verification completed successfully!")
         
         # Construct the metrics
-        metrics = {
+        self.metrics = {
             "parameter_settings": {
                 "edge_scale": self.n,
                 "replica_scale": self.replica_scale,
@@ -90,13 +96,15 @@ class Simulator:
                 "corruption_rate": self.corruption_rate
             },
             "duration": {
-                "local": l_times,
-                "global": g_times,
+                "local": self.l_times,
+                "global": self.g_times,
                 "dt1": self.dt1,
                 "dt2": self.dt2,
-                "timed_out": timed_out,
+                "dt3": self.dt3,
+                "timed_out": str([int(x) for x in self.timed_out]),
                 "cluster_formation": st1-st0,
                 "server_initialization": st3-st2,
+                "total_runtime": time.time()-st0
             },
             "cluster_info": {
                 "clusters": str(self.clusters),
@@ -107,7 +115,7 @@ class Simulator:
         }
 
         self.logger.debug("Simulation ended.")
-        return metrics
+        return self.metrics
 
     def get_rtt_matrix(self):
         try:
@@ -216,9 +224,22 @@ class Simulator:
         return cluster_heads                
 
     def get_corrupted_servers(self):
+        try:
+            corrupted_servers = loadtxt(f"data/corrupted_servers_{self.n}.csv", 
+                                        delimiter=",")
+            self.logger.debug("Loading the corrupted_servers...")
+            return corrupted_servers
+        except:
+            pass
+
+        self.logger.debug("Creating corrupted_servers...")
         corrupted_servers = [0] * self.n
         indices = random.sample(range(self.n), math.floor(
             self.n*self.corruption_rate))
         for index in indices:
             corrupted_servers[index] = 1
+        savetxt(f"data/corrupted_servers_{self.n}.csv", corrupted_servers, 
+                delimiter=",")
+        self.logger.debug("Corrupted servers created successfully!")
+        
         return corrupted_servers

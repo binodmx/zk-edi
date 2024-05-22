@@ -8,4 +8,4 @@ class AppVendor:
         return f"AppVendor"
     
     def run(self):
-        self.logger.log("Running...")
+        self.logger.debug("Running...")
