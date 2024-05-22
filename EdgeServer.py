@@ -1,5 +1,4 @@
 import time
-import threading
 import random
 import hashlib
 import numpy as np
@@ -8,8 +7,8 @@ from Logger import Logger
 
 class EdgeServer:
     def __init__(self, id, n, is_corrupted, data_replica, clusters, 
-                 cluster_heads, latency_matrix, sp_queues, ap_queues, dt1, dt2, 
-                 dt3, t1s, t2s, l_times, g_times, timed_out):
+                 cluster_heads, latency_matrix, sp_queues, ap_queues, lv_queues, 
+                 gv_queues, dt1, dt2, dt3, t1s, t2s, l_times, g_times, timed_out):
         self.id = id
         self.logger = Logger(self)
         self.n = n
@@ -21,6 +20,8 @@ class EdgeServer:
         self.private_key: PrivateKey = AugSchemeMPL.key_gen(bytes(
             [random.randint(0, 255) for i in range(32)]))
         self.public_key: G1Element = self.private_key.get_g1()
+        self.hash_d = bytes(hashlib.sha256(self.data_replica).digest())
+        self.proof = PopSchemeMPL.sign(self.private_key, self.hash_d)
         self.clusters = clusters
         self.cluster_heads = cluster_heads
         self.c_id, self.ch_id = next(((c_id, cluster_heads[c_id])
@@ -30,6 +31,8 @@ class EdgeServer:
         self.latency_matrix = latency_matrix
         self.sp_queues = sp_queues
         self.ap_queues = ap_queues
+        self.lv_queues = lv_queues
+        self.gv_queues = gv_queues
         self.dt1 = dt1
         self.dt2 = dt2
         self.dt3 = dt3
@@ -38,27 +41,23 @@ class EdgeServer:
         self.l_times = l_times
         self.g_times = g_times
         self.timed_out = timed_out
-        self.similar_proofs = {}
+        self.similar_proofs = {self.id: self.proof}
         self.distinct_proofs = {}
         self.similar_agg_proofs = {}
         self.distinct_agg_proofs = {}
         self.similar_proof_count = 0
         self.distinct_proof_count = 0
-        self.generate_proof()
 
     def __str__(self):
         return f"EdgeServer {self.id}"
 
-    def set_edge_servers(self, edge_servers):
-        self.edge_servers = edge_servers
+    def set_public_keys(self, public_keys):
+        self.public_keys = public_keys
     
-    def generate_proof(self):
-        self.hash_d = bytes(hashlib.sha256(self.data_replica).digest())
-        self.proof = PopSchemeMPL.sign(self.private_key, self.hash_d)
-        self.similar_proofs[self.id] = self.proof
+    def set_hash_ds(self, hash_ds):
+        self.hash_ds = hash_ds
     
     def run(self):
-        self.t0 = time.time()
         if self.is_cluster_head:
             self.logger.debug(f"Started as a {not self.is_corrupted} CH.")
             self.run_ch()
@@ -67,10 +66,172 @@ class EdgeServer:
             self.run_cm()   
     
     def run_cm(self):
-        if not self.is_cluster_head:
-            # self.edge_servers[self.ch_id].set_proof(self.id, self.proof)
-            self.sp_queues[self.ch_id].put({"id": self.id, "proof": self.proof})
+        ### Set the start time of the thread to measure the elapsed time.
+        self.t0 = time.time()
 
+        ### Send the proof to the cluster head.
+        if not self.is_cluster_head:
+            ### Simulate network latency, if latency < 0, the message is dropped
+            ### assuming the faulty behaviour of the edge server.
+            latency = self.latency_matrix[self.id][self.ch_id]
+            if latency >= 0:
+                time.sleep(latency)
+                self.sp_queues[self.ch_id].put({"id": self.id, 
+                                                "proof": self.proof})
+
+        ### Listens to the local proof from the cluster head until t2.
+        lv = self.lv_queues[self.id].get(timeout=(self.dt1 + self.dt2))
+        latency = self.latency_matrix[self.ch_id][self.id]
+        if latency >= 0:
+            time.sleep(latency)
+        if lv["agg_proof"]:
+            pks = [self.public_keys[id] for id in lv["ids"]]
+            self.local_verdict = PopSchemeMPL.fast_aggregate_verify(
+                pks, self.hash_d, lv["agg_proof"])
+            if self.local_verdict:
+                self.l_times[self.id] = time.time()-self.t0
+                self.logger.debug(f"""Local integrity reached in {(
+                    self.l_times[self.id])}s.""")
+                
+        ### Listens to the global proof from the cluster head until t3.
+        gv = self.gv_queues[self.id].get(timeout=(self.dt1 + self.dt2 + self.dt3))
+        latency = self.latency_matrix[self.ch_id][self.id]
+        if latency >= 0:
+            time.sleep(latency)
+        if gv["agg_proof"]:
+            pks = [self.public_keys[id] for id in gv["ids"]]
+            if self.hash_d == gv["hash_d"]:
+                self.global_verdict = PopSchemeMPL.fast_aggregate_verify(
+                    pks, self.hash_d, gv["agg_proof"])
+            else:
+                self.global_verdict = PopSchemeMPL.fast_aggregate_verify(
+                    pks, gv["hash_d"], gv["agg_proof"])
+            if self.global_verdict:
+                self.g_times[self.id] = time.time() - self.t0
+                self.logger.debug(f"""Global integrity reached in {(
+                    self.g_times[self.id])}s.""")
+            ### TODO: remove following parts after checking code
+            else:
+                self.g_times[self.id] = 0
+                self.logger.debug(f"Global integrity failed.")
+        else:
+            self.g_times[self.id] = -2
+            self.logger.debug(f"Global integrity failed.")
+
+    def run_ch(self):
+        ### Wait until first proof is received from the cluster members. This
+        ### is done because Python thread initialization takes much time.
+        if len(self.clusters[self.c_id]) > 1:
+            while self.sp_queues[self.id].empty():
+                time.sleep(0.0001)
+        self.t0 = time.time()
+
+        ### Listens to the proofs from the cluster members until t1.
+        while (time.time() - self.t0) < self.dt1 and len(
+            self.similar_proofs) <= len(self.clusters[self.c_id])/2:
+            if not self.sp_queues[self.id].empty():
+                sp = self.sp_queues[self.id].get()
+                ok = PopSchemeMPL.verify(self.public_keys[sp["id"]], 
+                                         self.hash_d, sp["proof"])
+                if ok:
+                    self.similar_proofs[sp["id"]] = sp["proof"]
+                else:
+                    self.distinct_proofs[sp["id"]] = sp["proof"]
+            time.sleep(0.0001)
+        self.t1s[self.id] = time.time() - self.t0
+
+        ### If more than half of the proofs are similar, aggregate them.
+        ### Otherwise, create empty aggregated proof.
+        if len(self.similar_proofs) > len(self.clusters[self.c_id])/2:
+            intra_agg_proof = PopSchemeMPL.aggregate(list(
+                self.similar_proofs.values()))
+            self.local_verdict = True
+            self.l_times[self.id] = time.time()-self.t0
+            self.logger.debug(f"""Local integrity reached in {(self.l_times[self.id])}s.""")
+        else:
+            intra_agg_proof = None
+        ids = self.similar_proofs.keys() if intra_agg_proof else []
+        
+        ### Send the agg_proof to other cluster heads.
+        for ch_id in self.cluster_heads.values():
+            if ch_id == self.id:
+                self.similar_agg_proofs[self.id] = {"id": self.id, 
+                                                    "proof": self.proof,
+                                                    "ids": ids,
+                                                    "agg_proof": intra_agg_proof}
+                self.similar_proof_count += len(ids)
+                continue
+            self.ap_queues[ch_id].put({"id": self.id, 
+                                       "proof": self.proof,
+                                       "ids": ids,
+                                       "agg_proof": intra_agg_proof})
+        
+        ### Send the agg_proof to other cluster members as local integrity.
+        for s_id in self.clusters[self.c_id]:
+            self.lv_queues[s_id].put({"ids": ids, "agg_proof": intra_agg_proof})                
+
+        ### Listens to the agg proofs from the cluster heads until t2.
+        while (time.time() - self.t0) < self.dt1+self.dt2 and self.similar_proof_count <= self.n/2:
+            if not self.ap_queues[self.id].empty():
+                ap = self.ap_queues[self.id].get()
+                pks = [self.public_keys[id] for id in ap["ids"]]
+                if ap["agg_proof"] and PopSchemeMPL.fast_aggregate_verify(pks, self.hash_d, ap["agg_proof"]):
+                    self.similar_agg_proofs[ap["id"]] = ap
+                    self.similar_proof_count += len(pks)
+                else:
+                    self.distinct_agg_proofs[ap["id"]] = ap
+                    self.distinct_proof_count += len(pks)
+            time.sleep(0.0001)
+        self.t2s[self.id] = time.time() - self.t0
+        
+        if self.similar_proof_count > self.n/2:
+            inter_agg_proof = PopSchemeMPL.aggregate([self.similar_agg_proofs[ch_id]["proof"] for ch_id in self.similar_agg_proofs.keys()])
+            ids = self.similar_agg_proofs.keys()
+            hash_d = self.hash_d
+        else:
+            # Simulate network latency to get the hash_d values from other
+            # cluster heads. Thus, sleeping for the maximum latency of the
+            # cluster heads.
+            # max_latency = max([self.latency_matrix[self.id][id] 
+            #                    for id in self.cluster_heads.values()])
+            # time.sleep(max_latency)
+
+            # Retrieve the hash_d values from other cluster heads. Then, get the
+            # mode of hash_d values.
+            hash_ds = [self.hash_ds[ch_id] for ch_id in self.cluster_heads.values()]
+            hash_d = max(set(hash_ds), key=hash_ds.count)
+
+            ### Verify the aggregated proofs of the cluster heads using hash_d.
+            ids = []
+            sp_count = 0
+            for ap in self.distinct_agg_proofs.values():
+                pks = [self.public_keys[id] for id in ap["ids"]]
+                if ap["agg_proof"] and PopSchemeMPL.fast_aggregate_verify(pks, hash_d, ap["agg_proof"]):
+                    ids.append(ap["id"])
+                    sp_count += len(pks)
+            if sp_count > self.n/2:
+                inter_agg_proof = PopSchemeMPL.aggregate([self.distinct_agg_proofs[id]["proof"] for id in ids])
+            else:
+                inter_agg_proof = None
+        
+        ### Send the agg_proof to other cluster members as global integrity.
+        for s_id in self.clusters[self.c_id]:
+            self.gv_queues[s_id].put({"ids": ids, "agg_proof": inter_agg_proof, 
+                                      "hash_d": hash_d})
+        
+        ### Set global integrity.
+        if inter_agg_proof:
+            pks = [self.public_keys[id] for id in ids]
+            self.global_verdict = PopSchemeMPL.fast_aggregate_verify(pks, hash_d, inter_agg_proof)
+            if self.global_verdict:
+                self.g_times[self.id] = time.time() - self.t0
+                self.logger.debug(f"""Global integrity reached in {(self.g_times[self.id])}s.""")
+            
+    # Deprecated
+    def set_edge_servers(self, edge_servers):
+        self.edge_servers = edge_servers
+
+    # Deprecated
     def set_proof(self, id, proof):
         ### Waiting until this thread has been started.
         while not hasattr(self, 't0'):
@@ -95,99 +256,7 @@ class EdgeServer:
             self.timed_out[id] = True
             self.logger.debug(f"EdgeServer{id}'s proof timed out.")
 
-    def run_ch(self):
-        while (time.time() - self.t0) < self.dt1:
-            if not self.queues[self.id].empty():
-                proof = self.queues[self.id].get()
-                if PopSchemeMPL.verify(self.edge_servers[id].public_key, self.hash_d, proof):
-                    self.similar_proofs[id] = proof
-                else:
-                    self.distinct_proofs[id] = proof
-
-        ### Wait until timeout dt1 or similar proof count is higher than 50%.
-        ### Then if more than half of the proofs are similar, aggregate them.
-        ### Otherwise, create empty aggregated proof.
-        while True:
-            dt = time.time() - self.t0
-            if dt > self.dt1 or len(self.similar_proofs) > len(
-                self.clusters[self.c_id])/2:
-                self.t1s[self.id] = dt
-                break
-        # if len(self.similar_proofs) > len(self.clusters[self.c_id])/2:
-        #     intra_agg_proof = PopSchemeMPL.aggregate(list(
-        #         self.similar_proofs.values()))
-        # else:
-        #     intra_agg_proof = None
-        # ids = self.similar_proofs.keys() if intra_agg_proof else []
-        
-        ### Send the agg_proof to other cluster heads and cluster members.
-        # for c_id, ch_id in self.cluster_heads.items():
-        #     if ch_id == self.id:
-        #         self.similar_agg_proofs[self.id] = intra_agg_proof
-        #         self.similar_proof_count += len(ids)
-        #         continue
-        #     threading.Thread(target=self.edge_servers[ch_id].set_agg_proof, 
-        #                      args=(self.id, ids, intra_agg_proof,)).start()
-        # for s_id in self.clusters[self.c_id]:
-        #     threading.Thread(target=self.edge_servers[s_id].set_local_verdict, 
-        #                      args=(ids, intra_agg_proof,)).start()
-        
-        ### Wait until timeout dt2 or similar proof count is higher than 50%.
-        ### Then if more than half of the proofs are similar, aggregate them.
-        ### Otherwise, get the mode of hash_d values and aggregate the proofs.
-        # while True:
-        #     if (time.time() - self.t0) > (self.dt1 + self.dt2) or (
-        #         self.similar_proof_count > self.n/2):
-        #         self.t2s[self.id] = time.time()-self.t0
-        #         break
-
-        # if self.similar_proof_count > self.n/2:
-        #     print(self.id, "I ran", len(self.similar_agg_proofs))
-        #     inter_agg_proof = PopSchemeMPL.aggregate([
-        #         self.edge_servers[ch_id].proof 
-        #         for ch_id in self.similar_agg_proofs.keys()])
-        #     print(self.id, "I ran2", len(self.similar_agg_proofs))
-        #     ids = self.similar_agg_proofs.keys() if inter_agg_proof else []
-        #     hash_d = self.hash_d
-        # else:
-        #     while True:
-        #         if time.time() - self.t0 > (self.dt1 + self.dt2 + self.dt3) or (
-        #             self.distinct_proof_count > self.n/2):
-        #             break
-
-        #     # Simulate network latency to get the hash_d values from other
-        #     # cluster heads. Thus, sleeping for the maximum latency of the
-        #     # cluster heads.
-        #     max_latency = max([self.latency_matrix[self.id][id] 
-        #                        for id in self.cluster_heads.values()])
-        #     time.sleep(max_latency)
-
-        #     # Retrieve the hash_d values from other cluster heads. Then, get the
-        #     # mode of hash_d values.
-        #     hash_ds = [self.edge_servers[ch_id].hash_d 
-        #                for ch_id in self.cluster_heads.values()]
-        #     hash_d = max(set(hash_ds), key=hash_ds.count)
-
-        #     # Verify the aggregated proofs of the cluster heads using hash_d.
-        #     if self.distinct_proof_count > self.n/2:
-        #         ids = []
-        #         for id, (pks, agg_proof) in self.distinct_agg_proofs.items():
-        #             if agg_proof and PopSchemeMPL.fast_aggregate_verify(
-        #                 pks, hash_d, agg_proof):
-        #                 ids.append(id)
-        #         inter_agg_proof = PopSchemeMPL.aggregate([
-        #             self.edge_servers[id].proof for id in ids])
-        #         pks = [self.edge_servers[id].public_key for id in ids]
-        #     else:
-        #         print(self.id, self.similar_proof_count, self.distinct_proof_count)
-        #         inter_agg_proof = None
-        #         pks = []
-        
-        ### Send the aggregated proof along with hash_d to cluster members.
-        # for s_id in self.clusters[self.c_id]:
-        #     threading.Thread(target=self.edge_servers[s_id].set_global_verdict, 
-        #                      args=(ids, inter_agg_proof, hash_d,)).start()
-
+    # Deprecated
     def set_agg_proof(self, id, ids, agg_proof):
         ### Waiting until this thread has been started.
         while not hasattr(self, 't0'):
@@ -214,6 +283,7 @@ class EdgeServer:
         else:
             self.logger.debug(f"EdgeServer{id}'s agg_proof timed out.")
     
+    # Deprecated
     def set_local_verdict(self, ids, agg_proof):
         ### Waiting until this thread has been started.
         while not hasattr(self, 't0'):
@@ -234,6 +304,7 @@ class EdgeServer:
                 self.logger.debug(f"""Local integrity reached in {(
                     self.l_times[self.id])}s.""")
 
+    # Deprecated
     def set_global_verdict(self, ids, agg_proof, hash_d):
         # Waiting until this thread has been started.
         while not hasattr(self, 't0'):

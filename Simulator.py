@@ -8,6 +8,7 @@ from numpy import savetxt
 from numpy import loadtxt
 from EdgeServer import EdgeServer
 from Logger import Logger
+from queue import Queue
 from sklearn.cluster import SpectralClustering
 from RecursiveSpectralClustering import RecursiveSpectralClustering
 from RandomClustering import RandomClustering
@@ -54,9 +55,17 @@ class Simulator:
         self.l_times = [-1]*self.n
         self.g_times = [-1]*self.n
         self.timed_out = [False]*self.n
+        self.t1s = [0]*self.n
+        self.t2s = [0]*self.n
         self.edge_servers = []
+        self.public_keys = []
+        self.hash_ds = []
+        self.sp_queues = [Queue() for i in range(self.n)]
+        self.ap_queues = [Queue() for i in range(self.n)]
+        self.lv_queues = [Queue() for i in range(self.n)]
+        self.gv_queues = [Queue() for i in range(self.n)]
         for i in range(self.n):
-            self.edge_servers.append(EdgeServer(
+            edge_server = EdgeServer(
                 id=i,
                 n=self.n,
                 is_corrupted=bool(self.corrupted_servers[i]),
@@ -64,14 +73,25 @@ class Simulator:
                 clusters=self.clusters,
                 cluster_heads=self.cluster_heads,
                 latency_matrix=self.rtt_matrix/2,
+                sp_queues=self.sp_queues,
+                ap_queues=self.ap_queues,
+                lv_queues=self.lv_queues,
+                gv_queues=self.gv_queues,
                 dt1=self.dt1,
                 dt2=self.dt2, 
                 dt3=self.dt3,
+                t1s=self.t1s,
+                t2s=self.t2s,
                 l_times=self.l_times,
                 g_times=self.g_times,
-                timed_out=self.timed_out))
+                timed_out=self.timed_out)
+            self.edge_servers.append(edge_server)
+            self.public_keys.append(edge_server.public_key)
+            self.hash_ds.append(edge_server.hash_d)
         for i in range(self.n):
-            self.edge_servers[i].set_edge_servers(self.edge_servers)
+            self.edge_servers[i].set_public_keys(self.public_keys)
+            self.edge_servers[i].set_hash_ds(self.hash_ds)
+
         st3 = time.time()
         self.logger.debug("Edge servers initialized successfully!")
         
@@ -80,11 +100,12 @@ class Simulator:
         init_thread_count = threading.active_count()
         for i in range(self.n):
             threading.Thread(target=self.edge_servers[i].run).start()
+        st4 = time.time()
         
         # Wait for all threads to finish and then wait for few more seconds 
         # to ensure that all threads have completed the verification process.
         while threading.active_count() > init_thread_count:
-            time.sleep(0.000001)
+            time.sleep(0.0001)
         self.logger.debug("Data verification completed successfully!")
         
         # Construct the metrics
@@ -101,9 +122,12 @@ class Simulator:
                 "dt1": self.dt1,
                 "dt2": self.dt2,
                 "dt3": self.dt3,
+                "t1s": self.t1s,
+                "t2s": self.t2s,
                 "timed_out": str([int(x) for x in self.timed_out]),
                 "cluster_formation": st1-st0,
                 "server_initialization": st3-st2,
+                "thread_creation": st4-st3,
                 "total_runtime": time.time()-st0
             },
             "cluster_info": {
@@ -225,7 +249,7 @@ class Simulator:
 
     def get_corrupted_servers(self):
         try:
-            corrupted_servers = loadtxt(f"data/corrupted_servers_{self.n}.csv", 
+            corrupted_servers = loadtxt(f"data/corrupted_servers_{self.n}_{self.corruption_rate}.csv", 
                                         delimiter=",")
             self.logger.debug("Loading the corrupted_servers...")
             return corrupted_servers
@@ -238,7 +262,7 @@ class Simulator:
             self.n*self.corruption_rate))
         for index in indices:
             corrupted_servers[index] = 1
-        savetxt(f"data/corrupted_servers_{self.n}.csv", corrupted_servers, 
+        savetxt(f"data/corrupted_servers_{self.n}_{self.corruption_rate}.csv", corrupted_servers, 
                 delimiter=",")
         self.logger.debug("Corrupted servers created successfully!")
         
