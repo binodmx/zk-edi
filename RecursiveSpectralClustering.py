@@ -63,9 +63,9 @@ class RecursiveSpectralClustering:
         return clusters
 
     def fit(self, X):
+        X = X if self.affinity == "precomputed" else SpectralClustering(n_clusters=1, affinity=self.affinity).fit(X).affinity_matrix_
         n = X.shape[0]
         m = round(n/self.n_clusters)
-        X = X if self.affinity == "precomputed" else SpectralClustering(n_clusters=self.n_clusters, affinity=self.affinity).fit(X).affinity_matrix_
         clusters = self.__recursive_clustering(n, m, X, X, list(range(n)))
         labels = [0]*n
         label = 0
