@@ -1,2 +1,8 @@
 __pycache__/
 test_*
+deprecated
+images
+charts
+data
+emulation
+notebooks
