@@ -223,7 +223,7 @@ class EdgeServer(threading.Thread):
         
     def verify_agg_proofs_and_send_global_verdict(self):
         while ((time.time() - self.t0) < self.dt1+self.dt2) and (
-            self.similar_proof_count <= self.n/2):
+            self.similar_proof_count <= self.n/3):
             if not self.ap_queues[self.id].empty():
                 ap = self.ap_queues[self.id].get()
                 pks = [self.public_keys[id] for id in ap["ids"]]
@@ -240,7 +240,7 @@ class EdgeServer(threading.Thread):
             time.sleep(0.0001)
         self.t2s[self.id] = time.time() - self.t0
         
-        if self.similar_proof_count > self.n/2:
+        if self.similar_proof_count > self.n/3:
             time.sleep(random.uniform(
                 self.proof_aggregation_delays[str(len(
                     self.similar_agg_proofs))]["min"],
@@ -279,7 +279,7 @@ class EdgeServer(threading.Thread):
                         self.proof_verification_delays[str(len(pks))]["max"]))
                     ids.append(ap["id"])
                     sp_count += len(pks)
-            if sp_count > self.n/2:
+            if sp_count > self.n/3:
                 time.sleep(random.uniform(
                     self.proof_aggregation_delays[str(len(
                         self.distinct_agg_proofs))]["min"],

@@ -16,7 +16,7 @@ from RandomClustering import RandomClustering
 class Simulator:
     def __init__(self, edge_scale=100, replica_size=256, corruption_rate=0.1,
                  n_clusters=None, cluster_method="RecursiveSpectralClustering", 
-                 dt1=1, dt2=1, dt3=1):
+                 dt1=1, dt2=0.2, dt3=0.1):
         self.n = edge_scale
         self.replica_size = replica_size
         self.corruption_rate = corruption_rate
@@ -220,7 +220,7 @@ class Simulator:
         if self.n_clusters:
             n_clusters = self.n_clusters
         else:
-            n_clusters_by_n = {10: 4, 20: 5, 50: 12, 100: 17, 200: 24}
+            n_clusters_by_n = {10: 3, 20: 5, 50: 12, 100: 17, 200: 24}
             n_clusters = n_clusters_by_n[self.n] if self.n in n_clusters_by_n.keys() else math.floor(self.n**0.5)
 
         # Change Clustering class here to use different clustering algorithms.
@@ -266,7 +266,7 @@ class Simulator:
     def get_server_types(self):
         # Create a list of server types based on the number of servers.
         # NOTE: Change here for different server types.
-        server_types = [random.randint(5, 5) for _ in range(self.n)]
+        server_types = [random.randint(3, 4) for _ in range(self.n)]
         types_map = {1: 'rpi4_4', 2: 'rpi4_8', 3: 'rpi5_4', 4: 'rpi5_8', 5: 'msl5_16'}
         server_types = [types_map[server_type] for server_type in server_types]
         return server_types
