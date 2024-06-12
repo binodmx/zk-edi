@@ -14,8 +14,9 @@ from RecursiveSpectralClustering import RecursiveSpectralClustering
 from RandomClustering import RandomClustering
 
 class Simulator:
-    def __init__(self, edge_scale, replica_size, corruption_rate, dt1, dt2, dt3, 
-                 n_clusters=None, cluster_method="RecursiveSpectralClustering"):
+    def __init__(self, edge_scale=100, replica_size=256, corruption_rate=0.1,
+                 n_clusters=None, cluster_method="RecursiveSpectralClustering", 
+                 dt1=1, dt2=1, dt3=1):
         self.n = edge_scale
         self.replica_size = replica_size
         self.corruption_rate = corruption_rate
@@ -141,7 +142,7 @@ class Simulator:
                 "clusters": str(clusters),
                 "cluster_heads": str(cluster_heads),
                 "n_clusters": len(clusters),
-                "corrupted_servers": str(corrupted_servers),
+                "corrupted_servers": str([i for i in range(len(corrupted_servers)) if corrupted_servers[i] == 1]),
                 "server_types": str(server_types)
             },
             "integrity": {
@@ -172,6 +173,7 @@ class Simulator:
         # failure_range, we can control the failure rate. Here, failure rate 
         # represents the percentage of servers that are not responding. Failures
         # are represented by negative values in the matrix.
+        # NOTE: Change here for different failure rates.
         failure_range = 0.1
         noise = np.random.rand(self.n, self.n) * failure_range - (failure_range/2)
         rtt_matrix = rtt_matrix + noise
@@ -218,11 +220,11 @@ class Simulator:
         if self.n_clusters:
             n_clusters = self.n_clusters
         else:
-            n_clusters_by_n = {10: 4, 20: 5, 50: 12, 100: 17, 200: 27}
+            n_clusters_by_n = {10: 4, 20: 5, 50: 12, 100: 17, 200: 24}
             n_clusters = n_clusters_by_n[self.n] if self.n in n_clusters_by_n.keys() else math.floor(self.n**0.5)
 
         # Change Clustering class here to use different clustering algorithms.
-        # [SpectralClustering, RecursiveSpectralClustering, RandomClustering]
+        # NOTE: Change here for different clustering algorithms.
         if self.cluster_method == "SpectralClustering":
             clustering = SpectralClustering(n_clusters=n_clusters, affinity='precomputed', assign_labels='kmeans')
         elif self.cluster_method == "RandomClustering":
@@ -253,26 +255,17 @@ class Simulator:
         return cluster_heads
 
     def get_corrupted_servers(self):
-        # try:
-        #     corrupted_servers = loadtxt(f"data/corrupted_servers_{self.n}_{self.corruption_rate}.csv", delimiter=",")
-        #     return corrupted_servers
-        # except:
-        #     pass
-
         # Create a list of corrupted servers based on the corruption rate.
         corrupted_servers = [0] * self.n
         indices = random.sample(range(self.n), math.floor(self.n*self.corruption_rate))
         for index in indices:
             corrupted_servers[index] = 1
         
-        # Save the corrupted_servers to a file for future use.
-        # savetxt(f"data/corrupted_servers_{self.n}_{self.corruption_rate}.csv", corrupted_servers, delimiter=",")
-        
         return corrupted_servers
     
     def get_server_types(self):
         # Create a list of server types based on the number of servers.
-        # TODO: change here
+        # NOTE: Change here for different server types.
         server_types = [random.randint(5, 5) for _ in range(self.n)]
         types_map = {1: 'rpi4_4', 2: 'rpi4_8', 3: 'rpi5_4', 4: 'rpi5_8', 5: 'msl5_16'}
         server_types = [types_map[server_type] for server_type in server_types]

@@ -46,7 +46,7 @@ class EdgeServer(threading.Thread):
         self.similar_agg_proofs = {}
         self.distinct_agg_proofs = {}
         self.similar_proof_count = 1
-        self.distinct_proof_count = 1
+        self.distinct_proof_count = 0
         self.data_hashing_delay = data_hashing_delay
         self.hash_signing_delay = hash_signing_delay
         self.proof_aggregation_delays = proof_aggregation_delays
@@ -268,7 +268,9 @@ class EdgeServer(threading.Thread):
             # Verify the aggregated proofs of the cluster heads using hash_d.
             ids = []
             sp_count = 0
-            for ap in self.distinct_agg_proofs.values():
+            aps = list(self.similar_agg_proofs.values()) + list(
+                self.distinct_agg_proofs.values())
+            for ap in aps:
                 pks = [self.public_keys[id] for id in ap["ids"]]
                 if ap["agg_proof"] and PopSchemeMPL.fast_aggregate_verify(
                     pks, hash_d, ap["agg_proof"]):
