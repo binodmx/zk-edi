@@ -16,7 +16,7 @@ from RandomClustering import RandomClustering
 class Simulator:
     def __init__(self, edge_scale=100, replica_size=256, corruption_rate=0.1,
                  n_clusters=None, cluster_method="RecursiveSpectralClustering", 
-                 dt1=1, dt2=0.2, dt3=0.1):
+                 dt1=0.3, dt2=0.3, dt3=0.1):
         self.n = edge_scale
         self.replica_size = replica_size
         self.corruption_rate = corruption_rate

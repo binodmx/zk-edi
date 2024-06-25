@@ -257,7 +257,8 @@ class EdgeServer(threading.Thread):
             # cluster heads.
             max_latency = max([self.latency_matrix[self.id][id] 
                                for id in self.cluster_heads.values()])
-            time.sleep(max_latency)
+            if max_latency >=0:
+                time.sleep(max_latency)
 
             # Retrieve the hash_d values from other cluster heads. Then, get the
             # mode of hash_d values.
