@@ -1,0 +1,5 @@
+blspy
+paho-mqtt
+python-dotenv
+numpy
+matplotlib
